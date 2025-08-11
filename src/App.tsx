@@ -1,5 +1,5 @@
-import React, { useRef, useState } from "react";
-import { Stage, Layer, Image as KonvaImage } from "react-konva";
+import React, { useRef, useState, useEffect } from "react";
+import { Stage, Layer, Image as KonvaImage, Transformer } from "react-konva";
 
 // ---- Image processing helpers (copied & adapted) ----
 function gaussianKernel1D(sigma) {
@@ -166,6 +166,8 @@ export default function UnsharpMaskApp() {
   const [originalImageData, setOriginalImageData] = useState(null); // never changed
   const [filteredImageData, setFilteredImageData] = useState(null); // base image (filters applied, no stroke)
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [isSelected, setIsSelected] = useState(true);
 
   const [amount, setAmount] = useState(5.0);
   const [radius, setRadius] = useState(20);
@@ -174,18 +176,30 @@ export default function UnsharpMaskApp() {
   const [strokeColor, setStrokeColor] = useState("#000000");
 
   const konvaImageRef = useRef(null);
+  const transformerRef = useRef(null);
   const stageRef = useRef(null);
+
+  // Update transformer when selection changes
+  useEffect(() => {
+    if (isSelected && konvaImageRef.current && transformerRef.current) {
+      transformerRef.current.nodes([konvaImageRef.current]);
+      transformerRef.current.getLayer().batchDraw();
+    } else if (transformerRef.current) {
+      transformerRef.current.nodes([]);
+      transformerRef.current.getLayer().batchDraw();
+    }
+  }, [isSelected, imageObj]);
 
   // helper: get displayed image data (from Konva image node)
   const getDisplayedImageData = () => {
     const node = konvaImageRef.current;
     if (!node || !node.image()) return null;
     const canvas = document.createElement("canvas");
-    canvas.width = node.width();
-    canvas.height = node.height();
+    canvas.width = imageSize.width;
+    canvas.height = imageSize.height;
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(node.image(), 0, 0, canvas.width, canvas.height);
-    return ctx.getImageData(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(node.image(), 0, 0, imageSize.width, imageSize.height);
+    return ctx.getImageData(0, 0, imageSize.width, imageSize.height);
   };
 
   // internal: set Konva image from ImageData (does NOT change filteredImageData)
@@ -216,8 +230,9 @@ export default function UnsharpMaskApp() {
         const scale = Math.min(maxW / img.width, 1);
         const w = Math.round(img.width * scale);
         const h = Math.round(img.height * scale);
-        setStageSize({ width: w, height: h });
+        setImageSize({ width: w, height: h });
         setImageObj(img);
+        setIsSelected(true);
 
         const canvas = document.createElement("canvas");
         canvas.width = w;
@@ -352,6 +367,14 @@ export default function UnsharpMaskApp() {
     if (!originalImageData) return;
     setFilteredImageData(originalImageData);
     setDisplayedFromImageData(originalImageData, false);
+    // Reset transform
+    if (konvaImageRef.current) {
+      konvaImageRef.current.x(0);
+      konvaImageRef.current.y(0);
+      konvaImageRef.current.scaleX(1);
+      konvaImageRef.current.scaleY(1);
+      konvaImageRef.current.rotation(0);
+    }
   };
 
   // ---- Stroke handling (live) ----
@@ -388,13 +411,13 @@ export default function UnsharpMaskApp() {
     applyStrokeLive(strokeSize, val);
   };
 
-  const downloadPNG = () => {
-    if (!stageRef.current) return;
-    const dataURL = stageRef.current.toDataURL();
-    const link = document.createElement("a");
-    link.download = "unsharp_result.png";
-    link.href = dataURL;
-    link.click();
+  const handleStageClick = (e) => {
+    // Clicked on stage - deselect if not clicking on the image
+    if (e.target === e.target.getStage()) {
+      setIsSelected(false);
+    } else if (e.target === konvaImageRef.current) {
+      setIsSelected(true);
+    }
   };
 
   return (
@@ -482,23 +505,52 @@ export default function UnsharpMaskApp() {
         <button onClick={applyThresholdSimple}>Apply Threshold</button>
         <button onClick={() => increaseContrast(40)}>Increase Contrast</button>
         <button onClick={resetImage}>Reset</button>
-        <button onClick={downloadPNG}>Download PNG</button>
       </div>
 
       <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 14, marginBottom: 8, color: "#666" }}>
+          📌 Click on the image to select it, then drag to move or use the
+          corners to scale and rotate. Click outside the image to deselect.
+        </div>
         <Stage
           ref={stageRef}
           width={stageSize.width}
           height={stageSize.height}
           style={{ border: "1px solid #ddd", background: "transparent" }}
+          onClick={handleStageClick}
         >
           <Layer>
             <KonvaImage
               ref={konvaImageRef}
               image={imageObj}
-              width={stageSize.width}
-              height={stageSize.height}
+              width={imageSize.width}
+              height={imageSize.height}
+              draggable={true}
+              onClick={() => setIsSelected(true)}
             />
+            {isSelected && (
+              <Transformer
+                ref={transformerRef}
+                rotateEnabled={true}
+                enabledAnchors={[
+                  "top-left",
+                  "top-center",
+                  "top-right",
+                  "middle-left",
+                  "middle-right",
+                  "bottom-left",
+                  "bottom-center",
+                  "bottom-right",
+                ]}
+                boundBoxFunc={(oldBox, newBox) => {
+                  // Limit resize
+                  if (newBox.width < 10 || newBox.height < 10) {
+                    return oldBox;
+                  }
+                  return newBox;
+                }}
+              />
+            )}
           </Layer>
         </Stage>
       </div>
